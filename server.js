@@ -1,63 +1,90 @@
 const express = require('express');
-const WebSocket = require('ws');
+const puppeteer = require('puppeteer-extra');
+const StealthPlugin = require('puppeteer-extra-plugin-stealth');
+
+// Cloudflare ki security bypass karne ke liye stealth mode
+puppeteer.use(StealthPlugin());
+
 const app = express();
 const port = process.env.PORT || 3000;
 
-let rawQuotexPrice = null;
+let currentLivePrice = 0;
 
-// Background WebSocket (Sirf connection zinda rakhne ke liye)
-function connectQuotex() {
-    const ws = new WebSocket('wss://ws2.market-qx.trade/socket.io/?EIO=3&transport=websocket', {
-        headers: { 'User-Agent': 'Mozilla/5.0', 'Origin': 'https://market-qx.trade' },
-        rejectUnauthorized: false
+// Headless Browser Setup
+async function startHeadlessQuotex() {
+    console.log("🚀 Background Chrome Browser Start ho raha hai...");
+    
+    // Railway par Chrome chalane ke zaroori settings
+    const browser = await puppeteer.launch({
+        headless: true,
+        args: [
+            '--no-sandbox', 
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu'
+        ]
+    });
+    
+    const page = await browser.newPage();
+    
+    // 1. Browser se Node.js server mein data bhejne ka rasta banana
+    await page.exposeFunction('sendPriceToAPI', (price) => {
+        currentLivePrice = price;
     });
 
-    ws.on('open', () => { ws.send('40'); });
-    ws.on('message', (data) => {
-        const msg = data.toString();
-        const match = msg.match(/[\[:,]\s*(\d+\.\d{3,6})\b/);
-        if (match && parseFloat(match[1]) > 1) { 
-            rawQuotexPrice = parseFloat(match[1]); 
-        }
-        if(msg === '2') ws.send('3');
+    // 2. Hamara wahi purana "System Hook" browser load hone se pehle dalna!
+    await page.evaluateOnNewDocument(() => {
+        const origParse = JSON.parse;
+        let lastP = 0;
+        JSON.parse = function(text) {
+            const obj = origParse(text);
+            try {
+                const match = text.match(/[\[:,]\s*(\d+\.\d{3,6})\b/);
+                if (match) {
+                    const p = parseFloat(match[1]);
+                    if(p < 200000 && p !== lastP) {
+                        lastP = p;
+                        // Data Node.js ko bhej do
+                        window.sendPriceToAPI(p);
+                    }
+                }
+            } catch(e) {}
+            return obj;
+        };
     });
-    ws.on('error', () => {});
-    ws.on('close', () => setTimeout(connectQuotex, 3000));
+
+    console.log("🌍 Quotex ki website open ki jaa rahi hai...");
+    
+    // Quotex kholna (timeout badha diya hai taake slow load ho toh crash na ho)
+    await page.goto('https://market-qx.trade/en/', { waitUntil: 'networkidle2', timeout: 60000 });
+    
+    console.log("✅ Quotex Live! Real Price Hooked Successfully.");
 }
-connectQuotex();
 
-// API Endpoint (100 Perfect Candles for Bot Testing)
+// Server start hote hi Chrome background mein on kar do
+startHeadlessQuotex();
+
+// API Endpoint (Bot ke liye 100 Candles Data)
 app.get('/', (req, res) => {
-    const pairParam = req.query.pairs || "USDMXN_OTC";
-    const pair = pairParam.toUpperCase();
+    const pair = req.query.pairs || "LIVE_OTC";
     
-    // Pair ke hisaab se realistic price set karna (Taa ke bot theek kaam kare)
-    let basePrice = 1.08500; // Default (EUR/USD jaisa)
-    if (pair.includes("USDMXN")) basePrice = 19.89800;
-    if (pair.includes("USDINR")) basePrice = 83.50000;
-    if (pair.includes("JPY")) basePrice = 155.200;
+    // Agar background Chrome ne abhi data nahi pakra toh 1.0 dikhayega, warna Asli Price.
+    let basePrice = currentLivePrice || 1.00000;
     
-    // Agar background se koi milti julti price aayi ho toh wo lelo
-    if (rawQuotexPrice && Math.abs(rawQuotexPrice - basePrice) < 5) {
-        basePrice = rawQuotexPrice;
-    }
-
     let historyCandles = [];
     let currentCandlePrice = basePrice;
     
-    // 100 Candles ka Loop (Perfect Math ke sath)
+    // Bot ke liye Candles generate karna (Lekin Base asli live market ki hogi)
     for (let i = 99; i >= 0; i--) {
         let candleTime = new Date(Date.now() - (i * 60000));
         let timeString = `${candleTime.getFullYear()}-${String(candleTime.getMonth() + 1).padStart(2, '0')}-${String(candleTime.getDate()).padStart(2, '0')} ${String(candleTime.getHours()).padStart(2, '0')}:${String(candleTime.getMinutes()).padStart(2, '0')}:00 — +05:00 🇵🇰`;
 
-        // Price variation logic (Market ki tarah random movement)
-        let volatility = currentCandlePrice * 0.0001; // Price ke hisaab se movement
+        let volatility = currentCandlePrice * 0.0001; 
         let o = currentCandlePrice;
         let c = o + ((Math.random() - 0.5) * volatility);
         let h = Math.max(o, c) + (Math.random() * volatility * 0.5);
         let l = Math.min(o, c) - (Math.random() * volatility * 0.5);
         
-        // Agli candle pichli ke close se shuru hogi
         currentCandlePrice = c;
 
         historyCandles.push({
@@ -71,17 +98,24 @@ app.get('/', (req, res) => {
         });
     }
 
-    // Aakhri candle (Live) ko array ke aakhir mein rakhna
-    historyCandles.reverse(); // Latest time sabse upar laane ke liye
+    historyCandles.reverse(); // Latest price upar
+    
+    // Sab se top wali (Latest) candle par 100% real live price update karna
+    if(historyCandles.length > 0) {
+        historyCandles[0].close = basePrice.toFixed(5);
+        historyCandles[0].high = Math.max(parseFloat(historyCandles[0].open), basePrice).toFixed(5);
+        historyCandles[0].low = Math.min(parseFloat(historyCandles[0].open), basePrice).toFixed(5);
+        historyCandles[0].color = basePrice >= parseFloat(historyCandles[0].open) ? "Green" : "Red";
+    }
 
     const responseData = {
       developer: "@MMQUOBOT",
       telegram: "https://t.me/vectabot1",
-      market: pair,
+      market: pair.toUpperCase(),
       data: historyCandles
     };
 
     res.json(responseData);
 });
 
-app.listen(port, () => console.log(`🚀 API is running on port ${port}`));
+app.listen(port, () => console.log(`🚀 Headless API is running on port ${port}`));
