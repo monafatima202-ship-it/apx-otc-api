@@ -174,8 +174,24 @@ setInterval(() => {
 }, 60000);
 
 app.get('/', (req, res) => {
-    let pair = (req.query.pair || req.query.pairs || "USDINR_OTC").toUpperCase();
+    // 1. User ne jo pair manga (jaise USDPKR_OTC)
+    let pairParam = req.query.pair || req.query.pairs || "USDINR_OTC";
+    let pair = pairParam.toUpperCase();
+
+    // 2. DYNAMIC SUBSCRIPTION JADOO 📡
+    // Agar yeh pair hamari list mein nahi hai, aur Quotex se connection zinda hai:
+    if (!savedHistory.has(pair) && wsInstance && wsInstance.readyState === 1) {
+        // Quotex ko foran command bhejo ke is naye pair ka data bhi shuru karo!
+        wsInstance.send(`42["instruments/update",{"asset":"${pair}"}]`);
+        console.log(`📡 Naya Pair Manga Gaya: ${pair}`);
+        
+        // Khali array bana do taake error na aaye
+        savedHistory.set(pair, []);
+    }
+
     const data = savedHistory.get(pair) || [];
+    
+    // Status message
     const status = data.length === 0 ? "BUILDING_HISTORY... WAIT_1_MINUTE" : "LIVE_DATA_RUNNING";
 
     res.json({
@@ -187,6 +203,7 @@ app.get('/', (req, res) => {
         data: data
     });
 });
+
 
 app.get('/all', (req, res) => {
     const allData = {};
