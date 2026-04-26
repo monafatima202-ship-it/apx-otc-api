@@ -7,8 +7,8 @@ import os
 app = Flask(__name__)
 
 # 🔴 YAHAN APNA QUOTEX DEMO ACCOUNT DAALEIN 🔴
-QX_EMAIL = "your_demo_email@gmail.com" 
-QX_PASSWORD = "your_demo_password"
+QX_EMAIL = "datamonamerchant@gmail.com" 
+QX_PASSWORD = "54321@Ayzal"
 
 client = Quotex(email=QX_EMAIL, password=QX_PASSWORD)
 server_status = "INITIALIZING_ENGINE..."
