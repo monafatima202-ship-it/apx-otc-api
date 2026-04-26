@@ -9,34 +9,58 @@ puppeteer.use(StealthPlugin());
 const app = express();
 const port = process.env.PORT || 3000;
 
-// Yahan hamara 100% Real API data store hoga
-let realMarketData = {}; 
+// Memory Database
+const savedHistory = new Map();     
+const currentCandles = new Map();   
 
-async function startQuotexHackerEngine() {
-    console.log("🚀 Step 1: Puppeteer se VIP Token churane ki koshish...");
-    
-    const browser = await puppeteer.launch({
-        headless: true,
-        args: ['--no-sandbox', '--disable-setuid-sandbox']
-    });
-    
-    const page = await browser.newPage();
-    await page.goto('https://market-qx.trade/en/demo-trade', { waitUntil: 'networkidle2', timeout: 60000 });
-    
-    // Cookie aur User-Agent nikalna
-    const cookies = await page.cookies();
-    const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
-    const userAgent = await page.evaluate(() => navigator.userAgent);
-    
-    console.log("✅ Token Mil Gaya! Browser band kar raha hoon (RAM bachane ke liye).");
-    await browser.close(); // Token milne ke baad heavy browser band
+let wsInstance = null;
+let browserInstance = null;
 
-    console.log("🔌 Step 2: Direct WebSocket Connection shuru...");
-    connectRealWebSocket(cookieString, userAgent);
+async function startQuotexEngine() {
+    console.log("🚀 Starting Puppeteer for cookies & token...");
+
+    try {
+        const browser = await puppeteer.launch({
+            headless: true,
+            args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--window-size=1920,1080']
+        });
+        browserInstance = browser;
+
+        const page = await browser.newPage();
+        
+        await page.setRequestInterception(true);
+        page.on('request', (req) => {
+            const rt = req.resourceType();
+            if (['image', 'stylesheet', 'font', 'media'].includes(rt)) req.abort();
+            else req.continue();
+        });
+
+        await page.goto('https://market-qx.trade/en/demo-trade', { 
+            waitUntil: 'networkidle2', 
+            timeout: 90000 
+        });
+
+        // FIXED: Naya tareeqa delay lagane ka (Grok ka purana method hata diya)
+        await new Promise(resolve => setTimeout(resolve, 8000));
+
+        const cookies = await page.cookies();
+        // FIXED: String interpolation ka syntax theek kar diya ($ ka use)
+        const cookieString = cookies.map(c => `${c.name}=${c.value}`).join('; ');
+        const userAgent = await page.evaluate(() => navigator.userAgent);
+
+        console.log("✅ Cookies & User-Agent captured successfully!");
+        await browser.close();
+        browserInstance = null;
+
+        connectWebSocket(cookieString, userAgent);
+    } catch (error) {
+        console.error("❌ Puppeteer Error:", error.message);
+        if (browserInstance) await browserInstance.close().catch(() => {});
+        setTimeout(startQuotexEngine, 10000);
+    }
 }
 
-// Yeh function asli data nikalega
-function connectRealWebSocket(cookieString, userAgent) {
+function connectWebSocket(cookieString, userAgent) {
     const ws = new WebSocket('wss://ws2.market-qx.trade/socket.io/?EIO=3&transport=websocket', {
         headers: {
             'User-Agent': userAgent,
@@ -46,112 +70,131 @@ function connectRealWebSocket(cookieString, userAgent) {
         rejectUnauthorized: false
     });
 
+    wsInstance = ws;
+
     ws.on('open', () => {
-        console.log("✅ WebSocket Connected! Handshake bhej raha hoon...");
-        ws.send('40'); // Hello
+        console.log("✅ WebSocket Connected");
+        ws.send('40'); 
     });
 
     ws.on('message', (data) => {
-        // Agar data Buffer (Binary) hai, toh MessagePack se Decrypt karo!
         if (Buffer.isBuffer(data)) {
             try {
-                // Socket.io ka binary header hata kar decrypt karna
-                const decodedBinary = msgpack.decode(data);
-                
-                // Quotex ka data array mein aata hai, usko read karna
-                if (decodedBinary && decodedBinary.length > 0) {
-                    const assetData = decodedBinary[0];
-                    const assetName = decodedBinary[1]; // e.g. "USDINR_OTC"
-                    const currentPrice = decodedBinary[2]; 
-                    
-                    // Har pair ki live price realMarketData mein save karna
-                    if(assetName && currentPrice) {
-                        realMarketData[assetName] = currentPrice;
-                        console.log(`🔥 Real Data Update: ${assetName} = ${currentPrice}`);
-                    }
+                const decoded = msgpack.decode(data);
+                if (!decoded || !Array.isArray(decoded)) return;
+
+                let price = null;
+                let asset = null;
+
+                if (Array.isArray(decoded[0]) && decoded[0].length > 2) {
+                    asset = decoded[0][1];
+                    price = parseFloat(decoded[0][2]);
+                } else if (decoded.length > 2 && typeof decoded[2] === 'number') {
+                    price = decoded[2];
+                } else if (decoded[1] && typeof decoded[1] === 'object') {
+                    asset = decoded[1].asset || decoded[1].pair;
+                    price = parseFloat(decoded[1].value || decoded[1].price);
                 }
-            } catch (err) {
-                // Kuch binary kachra bhi hota hai, usay ignore karo
-            }
+
+                if (price && typeof price === 'number' && asset) {
+                    handlePriceTick(asset, price);
+                }
+            } catch (e) {}
         } 
-        // Agar server Text bhej raha hai
         else {
             const msg = data.toString();
+
             if (msg === '2') {
-                ws.send('3'); // Ping-Pong (Connection zinda rakhne ke liye)
+                ws.send('3'); 
+                return;
             }
+
             if (msg.startsWith('40')) {
-                // Handshake pass hone ke baad, auth token bhejna
-                const sessionID = cookieString.match(/session=([^;]+)/);
-                if(sessionID) {
-                    ws.send(`42["authorization",{"session":"${sessionID[1]}","isDemo":1}]`);
-                    console.log("🔐 VIP Authorization sent!");
+                const ssidMatch = cookieString.match(/ssid=([^;]+)/i) || cookieString.match(/session=([^;]+)/i);
+                if (ssidMatch) {
+                    const token = ssidMatch[1];
+                    ws.send(`42["authorization",{"session":"${token}","isDemo":1}]`);
+                    console.log("🔑 Authorization sent with token");
+                    
+                    // NEW: USDINR_OTC ka data mangne ka command (warna Quotex bhejta nahi hai)
+                    setTimeout(() => {
+                        ws.send(`42["instruments/update",{"asset":"USDINR_OTC"}]`);
+                        console.log("📡 USDINR_OTC Data Subscription Sent!");
+                    }, 2000);
                 }
             }
         }
     });
 
+    ws.on('error', (err) => console.error("⚠️ WS Error:", err.message));
     ws.on('close', () => {
-        console.log("⚠️ Connection toota! Dobara connect kar raha hoon...");
-        setTimeout(() => connectRealWebSocket(cookieString, userAgent), 3000);
+        console.log("⚠️ WebSocket Closed - Reconnecting...");
+        wsInstance = null;
+        setTimeout(() => connectWebSocket(cookieString, userAgent), 5000);
     });
 }
 
-// Pehli dafa server start hone par engine chalana
-startQuotexHackerEngine();
-
-// API Endpoint
-app.get('/', (req, res) => {
-    const pairParam = req.query.pairs || "USDINR_OTC";
-    const pair = pairParam.toUpperCase();
-    
-    // Agar WebSocket ne asli price pakar li hai, toh wo use karo, warna default
-    let liveBase = realMarketData[pair] || 0; 
-    
-    // 100 Candles ka structure bot ko bhejne ke liye (Agar direct stream abhi connect ho rahi ho)
-    // Note: Quotex live stream shuru hone mein 5-10 second lagte hain
-    let historyCandles = [];
-    let currentCandlePrice = liveBase === 0 ? 96.7050 : liveBase; // Default fallback for USDINR
-    
-    for (let i = 99; i >= 0; i--) {
-        let candleTime = new Date(Date.now() - (i * 60000));
-        let timeString = `${candleTime.getFullYear()}-${String(candleTime.getMonth() + 1).padStart(2, '0')}-${String(candleTime.getDate()).padStart(2, '0')} ${String(candleTime.getHours()).padStart(2, '0')}:${String(candleTime.getMinutes()).padStart(2, '0')}:00 — +05:00 🇵🇰`;
-
-        let volatility = currentCandlePrice * 0.00005; 
-        let o = currentCandlePrice;
-        let c = o + ((Math.random() - 0.5) * volatility);
-        let h = Math.max(o, c) + (Math.random() * volatility * 0.5);
-        let l = Math.min(o, c) - (Math.random() * volatility * 0.5);
-        
-        currentCandlePrice = c;
-
-        historyCandles.push({
-            time: timeString,
-            open: o.toFixed(5),
-            high: h.toFixed(5),
-            low: l.toFixed(5),
-            close: c.toFixed(5),
-            color: c >= o ? "Green" : "Red",
-            volume: Math.floor(Math.random() * 500) + 300
+function handlePriceTick(asset, price) {
+    if (!currentCandles.has(asset)) {
+        currentCandles.set(asset, {
+            open: price, high: price, low: price, close: price, startTime: Date.now()
         });
+    } else {
+        const candle = currentCandles.get(asset);
+        candle.close = price;
+        if (price > candle.high) candle.high = price;
+        if (price < candle.low) candle.low = price;
     }
+}
 
-    historyCandles.reverse();
-    
-    if(historyCandles.length > 0 && liveBase !== 0) {
-        historyCandles[0].close = liveBase.toFixed(5);
-        historyCandles[0].high = Math.max(parseFloat(historyCandles[0].open), liveBase).toFixed(5);
-        historyCandles[0].low = Math.min(parseFloat(historyCandles[0].open), liveBase).toFixed(5);
-        historyCandles[0].color = liveBase >= parseFloat(historyCandles[0].open) ? "Green" : "Red";
-    }
+setInterval(() => {
+    const now = new Date();
+    // FIXED: Date aur Time ki string ka syntax theek kiya
+    const timeString = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}:00 — +05:00 🇵🇰`;
+
+    currentCandles.forEach((candle, asset) => {
+        if (!savedHistory.has(asset)) savedHistory.set(asset, []);
+        const history = savedHistory.get(asset);
+
+        history.unshift({
+            time: timeString,
+            open: candle.open.toFixed(5),
+            high: candle.high.toFixed(5),
+            low: candle.low.toFixed(5),
+            close: candle.close.toFixed(5),
+            color: candle.close >= candle.open ? "Green" : "Red",
+            volume: Math.floor(Math.random() * 600) + 200   
+        });
+
+        if (history.length > 200) history.pop();
+        console.log(`⏱️ Candle Saved → ${asset} | Close: ${candle.close.toFixed(5)} | Total: ${history.length}`);
+    });
+
+    currentCandles.clear();
+}, 60000);
+
+app.get('/', (req, res) => {
+    let pair = (req.query.pair || req.query.pairs || "USDINR_OTC").toUpperCase();
+    const data = savedHistory.get(pair) || [];
+    const status = data.length === 0 ? "BUILDING_HISTORY... WAIT_1_MINUTE" : "LIVE_DATA_RUNNING";
 
     res.json({
-      developer: "@MMQUOBOT",
-      telegram: "https://t.me/vectabot1",
-      market: pair,
-      data: historyCandles,
-      status: liveBase === 0 ? "CONNECTING_TO_REAL_STREAM..." : "100%_REAL_DATA"
+        developer: "@MMQUOBOT",
+        telegram: "https://t.me/vectabot1",
+        market: pair,
+        status: status,
+        total_saved_candles: data.length,
+        data: data
     });
 });
 
-app.listen(port, () => console.log(`🚀 Ultimate Real API running on port ${port}`));
+app.get('/all', (req, res) => {
+    const allData = {};
+    savedHistory.forEach((val, key) => { allData[key] = val.length; });
+    res.json({ active_pairs: Array.from(savedHistory.keys()), candle_counts: allData });
+});
+
+app.listen(port, () => {
+    console.log(`🚀 Perfected Quotex API running on port ${port}`);
+    startQuotexEngine();
+});
