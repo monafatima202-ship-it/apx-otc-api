@@ -1,3 +1,2 @@
 flask
-playwright
-git+https://github.com/cleitonleonel/pyquotex.git
+requests
