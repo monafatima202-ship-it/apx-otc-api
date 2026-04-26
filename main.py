@@ -1,11 +1,9 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, Response
+import json
 import requests
 import os
 
 app = Flask(__name__)
-
-# 🔴 YEH LINE ADD KAREIN: Is se order wahi rahega jo humne likha hai
-app.config['JSON_SORT_KEYS'] = False 
 
 @app.route('/')
 def get_data():
@@ -23,8 +21,8 @@ def get_data():
         response = requests.get(external_url, timeout=10)
         data = response.json()
 
-        # Ab order wahi aayega jo yahan likha hai
-        return jsonify({
+        # --- YAHAN HUM KHUD ORDER SET KAR RAHE HAIN (Strict Order) ---
+        custom_response = {
             "powered_by": "APX Premium",
             "channel_name": "@MMQUOBOT",
             "telegram_bot": "https://t.me/vectabot1",
@@ -33,10 +31,15 @@ def get_data():
             "status": "100%_REAL_DATA_FETCHED",
             "total_candles": len(data),
             "data": data
-        })
+        }
+
+        # JSON ko text mein convert karke bhejenge taake browser order na chhere
+        json_data = json.dumps(custom_response, indent=4)
+        return Response(json_data, mimetype='application/json')
 
     except Exception as e:
-        return jsonify({"status": "ERROR", "message": str(e)}), 500
+        error_resp = json.dumps({"status": "ERROR", "message": str(e)})
+        return Response(error_resp, mimetype='application/json', status=500)
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
