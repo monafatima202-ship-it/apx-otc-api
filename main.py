@@ -11,7 +11,6 @@ def get_data():
     count = request.args.get('count', '100') # Default 100 candles
 
     # 2. External API ka URL (Binding the link you found)
-    # Note: Humein pair ke sath '_otc' lagana hoga agar user ne nahi lagaya
     if not pair.endswith('_OTC'):
         api_pair = f"{pair}_OTC"
     else:
@@ -24,9 +23,12 @@ def get_data():
         response = requests.get(external_url, timeout=10)
         data = response.json()
 
-        # 4. Asli data wapas bhej dena
+        # 4. Asli data with YOUR BRANDING
         return jsonify({
-            "developer": "@MMQUOBOT",
+            "powered_by": "APX Premium",
+            "channel_name": "@MMQUOBOT",
+            "telegram_bot": "https://t.me/vectabot1",
+            "timezone": "UTC+6",
             "market": api_pair,
             "status": "100%_REAL_DATA_FETCHED",
             "total_candles": len(data),
