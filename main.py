@@ -4,13 +4,14 @@ import os
 
 app = Flask(__name__)
 
+# 🔴 YEH LINE ADD KAREIN: Is se order wahi rahega jo humne likha hai
+app.config['JSON_SORT_KEYS'] = False 
+
 @app.route('/')
 def get_data():
-    # 1. User se pair aur candles ki tadad lena
     pair = request.args.get('pair', request.args.get('pairs', 'USDINR_OTC')).upper()
-    count = request.args.get('count', '100') # Default 100 candles
+    count = request.args.get('count', '100')
 
-    # 2. External API ka URL (Binding the link you found)
     if not pair.endswith('_OTC'):
         api_pair = f"{pair}_OTC"
     else:
@@ -19,11 +20,10 @@ def get_data():
     external_url = f"https://zentraapi.site/api/Qx.php?pair={api_pair}&timeframe=M1&count={count}"
 
     try:
-        # 3. Data fetch karna
         response = requests.get(external_url, timeout=10)
         data = response.json()
 
-        # 4. Asli data with YOUR BRANDING
+        # Ab order wahi aayega jo yahan likha hai
         return jsonify({
             "powered_by": "APX Premium",
             "channel_name": "@MMQUOBOT",
@@ -36,10 +36,7 @@ def get_data():
         })
 
     except Exception as e:
-        return jsonify({
-            "status": "ERROR",
-            "message": f"Could not fetch data: {str(e)}"
-        }), 500
+        return jsonify({"status": "ERROR", "message": str(e)}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 8080))
