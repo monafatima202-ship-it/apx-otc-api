@@ -2,30 +2,34 @@ from flask import Flask, request, Response
 import json
 import requests
 import os
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 app = Flask(__name__)
 
+# Retry Logic setup (Agar timeout ho toh 3 baar khud koshish karega)
+session = requests.Session()
+retries = Retry(total=3, backoff_factor=0.5, status_forcelist=[500, 502, 503, 504])
+session.mount('https://', HTTPAdapter(max_retries=retries))
+
 @app.route('/')
 def get_data():
-    # Pair parameters handle karna (USDPKR_otc etc)
     pair_param = request.args.get('pair', request.args.get('pairs', 'USDINR_otc'))
-    # Is API ke liye lowercase ya uppercase dono chalte hain, lekin hum standardize rakhenge
     pair = pair_param.lower() 
 
-    # --- NAYA STABLE SOURCE ---
+    # Stable Source URL
     external_url = f"https://qbtxpoghen-candeldata.poghen.workers.dev/?pairs={pair}"
 
     try:
-        response = requests.get(external_url, timeout=15)
+        # Timeout ko 15s se barha kar 30s kar diya hai
+        response = session.get(external_url, timeout=30)
         json_resp = response.json()
 
-        # Is API ka data direct list mein hota hai ya 'data' key mein
         if isinstance(json_resp, list):
             actual_candles = json_resp
         else:
             actual_candles = json_resp.get('data', json_resp.get('candles', []))
 
-        # --- AAPKA PURANA FORMAT (Wahi details jo aapne mangi thin) ---
         custom_response = {
             "powered_by": "APX Premium",
             "channel_name": "@MMQUOBOT",
@@ -34,16 +38,17 @@ def get_data():
             "market": pair.upper(),
             "status": "100%_REAL_DATA_FETCHED",
             "total_candles": len(actual_candles),
-            "data": actual_candles  # Bot is 'data' key se candles read karega
+            "data": actual_candles 
         }
 
-        final_json = json.dumps(custom_response, indent=4)
-        return Response(final_json, mimetype='application/json')
+        return Response(json.dumps(custom_response, indent=4), mimetype='application/json')
 
+    except requests.exceptions.Timeout:
+        return Response(json.dumps({"status": "ERROR", "message": "Source server is too slow (Timeout)"}), mimetype='application/json', status=504)
     except Exception as e:
         return Response(json.dumps({"status": "ERROR", "message": str(e)}), mimetype='application/json', status=500)
 
 if __name__ == '__main__':
-    # Railway settings ke mutabiq port set karna
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
+    
