@@ -54,48 +54,91 @@ def init_db():
     conn.commit()
     conn.close()
 
+# ====================== AUTO BROADCAST ======================
+async def send_broadcast():
+    now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5)  # PKT
+    hour = now.hour
+
+    if hour == 7:
+        msg = "🌅 <b>GOOD MORNING TRADERS!</b>\n\nMarket is waking up. Time to activate <b>APX PRIME OS</b>.\nFocus sharp. Today's opportunities await. 🔥✨"
+    elif hour == 12:
+        msg = "❄️ <b>MID-DAY COOL DOWN PHASE</b>\n\nMarket is volatile. Take a break, review trades.\nProtect capital. Patience wins. 💎"
+    elif hour == 18:
+        msg = "🛠️ <b>MAINTENANCE WINDOW ACTIVE</b>\n\nSystem optimization in progress.\nReview performance. High accuracy signals resume soon. ⚡"
+    elif hour == 23:
+        msg = "🌙 <b>DEEP SLEEP PROTOCOL</b>\n\nMarket closing. Rest well and recharge.\nTomorrow is another victory. Stay sharp! 🌟"
+    else:
+        return
+
+    conn = sqlite3.connect('apx_stable_v190.db')
+    users = conn.execute("SELECT uid FROM users WHERE is_vip = 1").fetchall()
+    conn.close()
+
+    for (uid,) in users:
+        try:
+            await bot.send_message(uid, msg)
+        except:
+            pass
+
+# ====================== ADMIN NOTIFICATION ======================
+async def notify_admin(uid: int, name: str):
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"🆕 <b>New User Started Bot</b>\n"
+            f"ID: <code>{uid}</code>\n"
+            f"Name: {name}\n"
+            f"Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S PKT')}"
+        )
+    except:
+        pass
+
 # ====================== START ======================
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
     init_db()
+    await notify_admin(message.from_user.id, message.from_user.first_name)
+
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="⚡ ATTACH MAIN ENGINE", url=f"https://t.me/vectabot1"))
     kb.row(types.InlineKeyboardButton(text="🛡️ SECURE VERIFICATION", callback_data="auth_check"))
     
     await message.answer_photo(
         photo=BANNER_URL,
-        caption=f"<b>💎 APX PRIME OS v260.0</b>\n\n"
+        caption=f"<b>🌌 APX PRIME OS v260.0</b>\n\n"
                 f"Welcome <b>{message.from_user.first_name}</b> 👑\n"
-                f"<i>Quantum AI Trading Terminal</i>",
+                f"<i>Quantum OTC Intelligence System</i>",
         reply_markup=kb.as_markup()
     )
 
-# ====================== AUTH ======================
+# ====================== AUTH & SECURITY ======================
 @dp.callback_query(F.data == "auth_check")
 async def auth_check(callback: types.CallbackQuery):
     uid = callback.from_user.id
     try:
         chat = await bot.get_chat_member(CHANNEL_USERNAME, uid)
         if chat.status not in ["left", "kicked"]:
-            await callback.answer("✅ Access Granted")
+            await callback.answer("✅ Verified!", show_alert=True)
             await callback.message.delete()
 
             conn = sqlite3.connect('apx_stable_v190.db')
             u = conn.execute("SELECT expiry, is_vip FROM users WHERE uid = ?", (uid,)).fetchone()
             conn.close()
 
+            is_active = False
             if u and u[1] == 1 and u[0]:
                 try:
                     exp = datetime.datetime.strptime(u[0], "%Y-%m-%d %H:%M:%S")
                     if datetime.datetime.now() < exp:
-                        return await show_mode_selection_msg(uid)
+                        is_active = True
                 except: pass
 
-            kb = InlineKeyboardBuilder()
-            kb.row(types.InlineKeyboardButton(text="🔑 GET 7-DAY ACCESS", callback_data="get_key"))
-            await bot.send_photo(uid, BANNER_URL, 
-                caption=f"<b>🛸 APX PRIME OS</b>\n\nHello <b>{callback.from_user.first_name}</b>!", 
-                reply_markup=kb.as_markup())
+            if is_active:
+                return await show_mode_selection_msg(uid)
+            else:
+                kb = InlineKeyboardBuilder()
+                kb.row(types.InlineKeyboardButton(text="🔑 GET 7-DAY ACCESS", callback_data="get_key"))
+                await bot.send_photo(uid, BANNER_URL, caption=f"<b>🌌 APX PRIME OS v260.0</b>\n\nHello <b>{callback.from_user.first_name}</b>!", reply_markup=kb.as_markup())
         else:
             await callback.answer("❌ Join channel first!", show_alert=True)
     except:
@@ -132,7 +175,7 @@ async def verify_cmd(message: types.Message):
     conn.commit()
     conn.close()
 
-    await message.answer(f"✅ <b>ACCESS ACTIVATED!</b>\nValid until: <code>{exp[:10]}</code>")
+    await message.answer(f"✅ <b>7 DAYS ACCESS ACTIVATED!</b>\nValid until: <code>{exp[:10]}</code>")
     await show_mode_selection_msg(message.from_user.id)
 
 # ====================== MODE & PAIR SELECTION ======================
@@ -145,7 +188,7 @@ async def show_mode_selection_msg(uid: int):
 
 @dp.callback_query(F.data.startswith("m:"))
 async def mode_set(callback: types.CallbackQuery):
-    await callback.answer()
+    await callback.answer("✅ Mode Selected!")
     uid = callback.from_user.id
     user_ctx.setdefault(uid, {"pairs": [], "last_report": None, "strategy": None})
     user_ctx[uid]["mode"] = callback.data.split(":")[1]
@@ -155,13 +198,13 @@ async def send_pair_selection(uid: int):
     sel = user_ctx[uid]["pairs"]
     builder = InlineKeyboardBuilder()
     for code, display in PAIRS_DATA.items():
-        status = "🟢" if code in sel else "⚫"
+        status = "✅" if code in sel else "🔹"
         builder.add(types.InlineKeyboardButton(text=f"{status} {display}", callback_data=f"sel:{code}"))
     builder.adjust(2)
     if sel:
         builder.row(types.InlineKeyboardButton(text="🚀 NEXT → STRATEGY", callback_data="select_strategy"))
     builder.row(types.InlineKeyboardButton(text="⬅️ BACK", callback_data="back_to_mode"))
-    await bot.send_message(uid, "🧪 <b>SELECT ASSETS (MAX 3):</b>", reply_markup=builder.as_markup())
+    await bot.send_message(uid, "🧪 <b>SELECT ASSETS (MAX 3):</b>\n<i>Tap to toggle</i>", reply_markup=builder.as_markup())
 
 @dp.callback_query(F.data.startswith("sel:"))
 async def toggle_pair(callback: types.CallbackQuery):
@@ -191,15 +234,15 @@ async def select_strategy(callback: types.CallbackQuery):
         kb.row(types.InlineKeyboardButton(text=name, callback_data=f"strat:{key}"))
     await callback.message.edit_text("📈 <b>SELECT STRATEGY:</b>", reply_markup=kb.as_markup())
 
-# ====================== FLOW ======================
 @dp.callback_query(F.data.startswith("strat:"))
 async def set_strategy(callback: types.CallbackQuery):
     uid = callback.from_user.id
     user_ctx[uid]["strategy"] = STRATEGIES[callback.data.split(":")[1]]
     user_ctx[uid]["step"] = "quotex_days"
     await callback.message.delete()
-    await bot.send_message(uid, "💎 <b>Enter Number of Days</b> (e.g. <code>30</code>):")
+    await bot.send_message(uid, "💎 <b>Enter Number of Days</b> (e.g. <code>7</code>):")
 
+# ====================== TIME HANDLERS ======================
 @dp.message(lambda m: user_ctx.get(m.from_user.id, {}).get("step") == "quotex_days")
 async def handle_quotex_days(message: types.Message):
     if not message.text.strip().isdigit():
@@ -223,7 +266,7 @@ async def handle_end_time(message: types.Message):
     user_ctx[message.from_user.id]["end_t"] = message.text.strip()
     await execute_live_signals(message)
 
-# ====================== SIGNAL ENGINE ======================
+# ====================== ATTRACTIVE SIGNAL ENGINE ======================
 async def execute_live_signals(message: types.Message, is_regen=False):
     uid = message.from_user.id
     data = user_ctx.get(uid)
@@ -233,10 +276,16 @@ async def execute_live_signals(message: types.Message, is_regen=False):
     if is_regen and data.get("last_report"):
         report_content = data["last_report"]
     else:
-        load = await bot.send_message(uid, "🛸 <b>APX PRIME OS ACTIVATING...</b>\n<code>░░░░░░░░░░ 0%</code>")
-        for p in ["40%", "75%", "98%"]:
-            await asyncio.sleep(0.45)
-            await load.edit_text(f"🛸 <b>APX PRIME OS ACTIVATING...</b>\n<code>▓▓▓▓▓░░░░░ {p}</code>")
+        # Colorful Attractive Loading
+        load = await bot.send_message(uid, "🌌 <b>APX PRIME OS ACTIVATING</b>\n<code>░░░░░░░░░░ 0%</code> ✨")
+        stages = [
+            ("40%", "▓▓▓░░░░░░", "🌟"),
+            ("75%", "▓▓▓▓▓▓░░░░", "💎🔥"),
+            ("98%", "▓▓▓▓▓▓▓▓▓░", "🌸🚀✨")
+        ]
+        for p, bar, emoji in stages:
+            await asyncio.sleep(0.5)
+            await load.edit_text(f"🌌 <b>APX PRIME OS ACTIVATING</b>\n<code>{bar} {p}</code> {emoji}")
 
         signals = []
         async with aiohttp.ClientSession() as session:
@@ -255,34 +304,31 @@ async def execute_live_signals(message: types.Message, is_regen=False):
                                         sig_time = datetime.datetime.strptime(t_str, "%H:%M").time()
                                         start_t = datetime.datetime.strptime(data['start_t'], "%H:%M").time()
                                         end_t = datetime.datetime.strptime(data['end_t'], "%H:%M").time()
-                                        if start_t <= end_t:
-                                            if start_t <= sig_time <= end_t:
-                                                signals.append((sig_time, pair, direction, t_str))
-                                        else:  # overnight
-                                            if sig_time >= start_t or sig_time <= end_t:
-                                                signals.append((sig_time, pair, direction, t_str))
+                                        if (start_t <= end_t and start_t <= sig_time <= end_t) or \
+                                           (start_t > end_t and (sig_time >= start_t or sig_time <= end_t)):
+                                            signals.append((sig_time, pair, direction, t_str))
                                     except: pass
                 except: pass
 
         signals.sort(key=lambda x: x[0])
 
         body = ""
-        for _, pair, direction, t in signals[:40]:
+        for _, pair, direction, t in signals[:25]:
             arrow = "↑" if direction in ["CALL", "BUY"] else "↓"
-            body += f"⧉ <b>{t}</b> • {pair} {arrow} <b>{direction}</b>\n"
+            body += f"✨ <b>{t}</b> • {pair} {arrow} <b>{direction}</b>\n"
 
         if not body:
             body = "⚠️ No signals found in this time window.\n"
 
         report_content = (
-            f"<b>🛸 APX PRIME OS v260.0</b>\n"
+            f"<b>🌟 APX PRIME OS v260.0</b>\n"
             f"⏰ <b>{data['start_t']} - {data['end_t']}</b> (UTC+6)\n"
             f"📊 Strategy: <b>{data['strategy']}</b>\n"
-            f"📅 Days: <b>{data.get('quotex_days', '30')}</b>\n"
-            f"<b>━━━━━━━━━━━━━━━━━━━━</b>\n\n"
+            f"📅 Days: <b>{data.get('quotex_days', '7')}</b>\n"
+            f"<b>━━━━━━━━━━━━━━━━━━━━━━━</b>\n\n"
             f"{body}\n"
-            f"<b>━━━━━━━━━━━━━━━━━━━━</b>\n"
-            f"❗ <i>1% Risk • Minimum 80% Accuracy Recommended</i>"
+            f"<b>━━━━━━━━━━━━━━━━━━━━━━━</b>\n"
+            f"❗ <b>HIGH ACCURACY SIGNALS</b> • 1% Risk Only"
         )
         data["last_report"] = report_content
         await load.delete()
@@ -315,10 +361,25 @@ async def change_pair_back(callback: types.CallbackQuery):
 async def exit_sys(callback: types.CallbackQuery):
     await callback.answer()
     await callback.message.delete()
-    await bot.send_message(callback.from_user.id, "<code>Terminal Closed. Goodbye!</code>")
+    await bot.send_message(callback.from_user.id, "<code>APX PRIME TERMINAL CLOSED\nGoodbye 👋</code>")
 
+# ====================== MAIN ======================
 async def main():
+    init_db()
     await bot.delete_webhook(drop_pending_updates=True)
+    
+    # Start Auto Broadcast Scheduler
+    asyncio.create_task(send_broadcast())  # Initial check
+    asyncio.create_task(asyncio.sleep(3600))  # Hourly check loop (simplified)
+    
+    # Better scheduler loop
+    async def scheduler_loop():
+        while True:
+            await send_broadcast()
+            await asyncio.sleep(3600)  # Every hour
+
+    asyncio.create_task(scheduler_loop())
+    
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
