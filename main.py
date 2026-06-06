@@ -3,11 +3,13 @@ import asyncio
 import datetime
 import sqlite3
 import random
-import aiohttp
 import re
+import aiohttp
+
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
 # ====================== CONFIG ======================
@@ -16,7 +18,10 @@ ADMIN_ID = 6507462873
 CHANNEL_USERNAME = "@vectabot1"
 BANNER_URL = "https://raw.githubusercontent.com/monafatima202-ship-it/apx-otc-api/main/apxprime.png"
 
-bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+bot = Bot(
+    token=TOKEN,
+    default=DefaultBotProperties(parse_mode=ParseMode.HTML)
+)
 dp = Dispatcher()
 user_ctx = {}
 
@@ -49,7 +54,7 @@ def init_db():
     conn.commit()
     conn.close()
 
-# ====================== START & AUTH ======================
+# ====================== START ======================
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
     init_db()
@@ -65,6 +70,7 @@ async def start_handler(message: types.Message):
         reply_markup=kb.as_markup()
     )
 
+# ====================== AUTH ======================
 @dp.callback_query(F.data == "auth_check")
 async def auth_check(callback: types.CallbackQuery):
     uid = callback.from_user.id
@@ -87,7 +93,9 @@ async def auth_check(callback: types.CallbackQuery):
 
             kb = InlineKeyboardBuilder()
             kb.row(types.InlineKeyboardButton(text="🔑 GET 7-DAY ACCESS", callback_data="get_key"))
-            await bot.send_photo(uid, BANNER_URL, caption=f"<b>🛸 APX PRIME OS</b>\n\nHello <b>{callback.from_user.first_name}</b>!", reply_markup=kb.as_markup())
+            await bot.send_photo(uid, BANNER_URL, 
+                caption=f"<b>🛸 APX PRIME OS</b>\n\nHello <b>{callback.from_user.first_name}</b>!", 
+                reply_markup=kb.as_markup())
         else:
             await callback.answer("❌ Join channel first!", show_alert=True)
     except:
@@ -215,7 +223,7 @@ async def handle_end_time(message: types.Message):
     user_ctx[message.from_user.id]["end_t"] = message.text.strip()
     await execute_live_signals(message)
 
-# ====================== FIXED SIGNAL ENGINE ======================
+# ====================== SIGNAL ENGINE ======================
 async def execute_live_signals(message: types.Message, is_regen=False):
     uid = message.from_user.id
     data = user_ctx.get(uid)
@@ -225,7 +233,6 @@ async def execute_live_signals(message: types.Message, is_regen=False):
     if is_regen and data.get("last_report"):
         report_content = data["last_report"]
     else:
-        # Professional Loading
         load = await bot.send_message(uid, "🛸 <b>APX PRIME OS ACTIVATING...</b>\n<code>░░░░░░░░░░ 0%</code>")
         for p in ["40%", "75%", "98%"]:
             await asyncio.sleep(0.45)
