@@ -25,7 +25,7 @@ bot = Bot(
 dp = Dispatcher()
 user_ctx = {}
 
-# ====================== PAIRS & STRATEGIES ======================
+# ====================== PAIRS ======================
 PAIRS_DATA = {
     "USDINR": "🇺🇸🇮🇳 USDINR-OTC", "USDPKR": "🇺🇸🇵🇰 USDPKR-OTC", "USDJPY": "🇺🇸🇯🇵 USDJPY-OTC",
     "USDPHP": "🇺🇸🇵🇭 USDPHP-OTC", "USDMXN": "🇺🇸🇲🇽 USDMXN-OTC", "EURUSD": "🇪🇺🇺🇸 EURUSD-OTC",
@@ -56,10 +56,10 @@ def init_db():
 
 # ====================== AUTO BROADCAST ======================
 async def send_broadcast():
-    now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5)  # PKT
+    now = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=5)
     hour = now.hour
     messages = {
-        7: "🌅 <b>GOOD MORNING TRADERS!</b>\n\nMarket is waking up. Time to activate <b>APX PRIME OS</b>.\nFocus sharp. Today's opportunities await. 🔥✨",
+        7: "🌅 <b>GOOD MORNING TRADERS!</b>\n\nMarket is waking up. Time to activate <b>APX PRIME OS</b>.\nFocus sharp. Today's opportunities await. 🔥",
         12: "❄️ <b>MID-DAY COOL DOWN PHASE</b>\n\nMarket is volatile. Take a break, review trades.\nProtect capital. Patience wins. 💎",
         18: "🛠️ <b>MAINTENANCE WINDOW ACTIVE</b>\n\nSystem optimization in progress.\nReview performance. High accuracy signals resume soon. ⚡",
         23: "🌙 <b>DEEP SLEEP PROTOCOL</b>\n\nMarket closing. Rest well and recharge.\nTomorrow is another victory. Stay sharp! 🌟"
@@ -74,29 +74,15 @@ async def send_broadcast():
             except:
                 pass
 
-async def notify_admin(uid: int, name: str):
-    try:
-        await bot.send_message(ADMIN_ID, f"🆕 <b>New User Started Bot</b>\nID: <code>{uid}</code>\nName: {name}\nTime: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    except:
-        pass
-
-# ====================== START ======================
+# ====================== START & AUTH ======================
 @dp.message(Command("start"))
 async def start_handler(message: types.Message):
     init_db()
-    await notify_admin(message.from_user.id, message.from_user.first_name)
-
     kb = InlineKeyboardBuilder()
     kb.row(types.InlineKeyboardButton(text="⚡ ATTACH MAIN ENGINE", url=f"https://t.me/vectabot1"))
     kb.row(types.InlineKeyboardButton(text="🛡️ SECURE VERIFICATION", callback_data="auth_check"))
-    
-    await message.answer_photo(
-        photo=BANNER_URL,
-        caption=f"<b>🌌 APX PRIME OS v260.0</b>\n\nWelcome <b>{message.from_user.first_name}</b> 👑\n<i>Quantum OTC Intelligence</i>",
-        reply_markup=kb.as_markup()
-    )
+    await message.answer_photo(photo=BANNER_URL, caption=f"<b>🌌 APX PRIME OS v260.0</b>\n\nWelcome <b>{message.from_user.first_name}</b> 👑", reply_markup=kb.as_markup())
 
-# ====================== AUTH & KEY ======================
 @dp.callback_query(F.data == "auth_check")
 async def auth_check(callback: types.CallbackQuery):
     uid = callback.from_user.id
@@ -130,10 +116,8 @@ async def get_key(callback: types.CallbackQuery):
     await callback.answer()
     key = f"APX-{random.randint(1000,9999)}-{random.randint(1000,9999)}"
     conn = sqlite3.connect('apx_stable_v190.db')
-    conn.execute("INSERT OR REPLACE INTO users (uid, expiry, is_vip, temp_key) VALUES (?, ?, 0, ?)", 
-                 (callback.from_user.id, "NONE", key))
-    conn.commit()
-    conn.close()
+    conn.execute("INSERT OR REPLACE INTO users (uid, expiry, is_vip, temp_key) VALUES (?, ?, 0, ?)", (callback.from_user.id, "NONE", key))
+    conn.commit(); conn.close()
     await callback.message.answer(f"🔑 <b>7-DAY ACCESS KEY</b>\n\n<code>{key}</code>\n\nSend: <code>/verify {key}</code>")
 
 @dp.message(F.text.startswith("/verify"))
@@ -153,13 +137,12 @@ async def verify_cmd(message: types.Message):
     exp = (datetime.datetime.now() + datetime.timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
     conn = sqlite3.connect('apx_stable_v190.db')
     conn.execute("UPDATE users SET expiry = ?, is_vip = 1 WHERE uid = ?", (exp, message.from_user.id))
-    conn.commit()
-    conn.close()
+    conn.commit(); conn.close()
 
     await message.answer(f"✅ <b>7 DAYS ACCESS ACTIVATED!</b>\nValid until: <code>{exp[:10]}</code>")
     await show_mode_selection_msg(message.from_user.id)
 
-# ====================== MODE & ASSETS (FREEZE FIXED) ======================
+# ====================== MODE & ASSETS ======================
 async def show_mode_selection_msg(uid: int):
     user_ctx[uid] = {"pairs": [], "last_report": None, "strategy": None, "mode": None, "step": None}
     kb = InlineKeyboardBuilder()
@@ -169,7 +152,7 @@ async def show_mode_selection_msg(uid: int):
 
 @dp.callback_query(F.data.startswith("m:"))
 async def mode_set(callback: types.CallbackQuery):
-    await callback.answer("✅ Mode Selected!")
+    await callback.answer()
     uid = callback.from_user.id
     user_ctx.setdefault(uid, {"pairs": [], "last_report": None, "strategy": None})
     user_ctx[uid]["mode"] = callback.data.split(":")[1]
@@ -201,6 +184,8 @@ async def toggle_pair(callback: types.CallbackQuery):
     await callback.message.delete()
     await send_pair_selection(uid)
 
+# (back_to_mode, select_strategy, set_strategy, time handlers same as before)
+
 @dp.callback_query(F.data == "back_to_mode")
 async def back_to_mode(callback: types.CallbackQuery):
     await callback.answer()
@@ -223,14 +208,14 @@ async def set_strategy(callback: types.CallbackQuery):
     await callback.message.delete()
     await bot.send_message(uid, "💎 <b>Enter Number of Days</b> (e.g. <code>7</code>):")
 
-# ====================== TIME HANDLERS ======================
+# Time handlers (same)
 @dp.message(lambda m: user_ctx.get(m.from_user.id, {}).get("step") == "quotex_days")
 async def handle_quotex_days(message: types.Message):
     if not message.text.strip().isdigit():
         return await message.answer("❌ Please send a number only.")
     user_ctx[message.from_user.id]["quotex_days"] = message.text.strip()
     user_ctx[message.from_user.id]["step"] = "start_t"
-    await message.answer("🕒 <b>Enter Start Time</b> (e.g. <code>16:00</code>):")
+    await message.answer("🕒 <b>Enter Start Time</b> (e.g. <code>17:00</code>):")
 
 @dp.message(lambda m: user_ctx.get(m.from_user.id, {}).get("step") == "start_t")
 async def handle_start_time(message: types.Message):
@@ -238,7 +223,7 @@ async def handle_start_time(message: types.Message):
         return await message.answer("❌ Wrong format! Use HH:MM")
     user_ctx[message.from_user.id]["start_t"] = message.text.strip()
     user_ctx[message.from_user.id]["step"] = "end_t"
-    await message.answer("🕒 <b>Enter End Time</b> (e.g. <code>18:00</code>):")
+    await message.answer("🕒 <b>Enter End Time</b> (e.g. <code>20:00</code>):")
 
 @dp.message(lambda m: user_ctx.get(m.from_user.id, {}).get("step") == "end_t")
 async def handle_end_time(message: types.Message):
@@ -247,7 +232,7 @@ async def handle_end_time(message: types.Message):
     user_ctx[message.from_user.id]["end_t"] = message.text.strip()
     await execute_live_signals(message)
 
-# ====================== FIXED SIGNAL ENGINE ======================
+# ====================== FIXED TIME FILTER + COPY ======================
 async def execute_live_signals(message: types.Message, is_regen=False):
     uid = message.from_user.id
     data = user_ctx.get(uid)
@@ -321,15 +306,14 @@ async def execute_live_signals(message: types.Message, is_regen=False):
 
     await bot.send_message(uid, f"<b>📡 LIVE SIGNALS GENERATED</b>\n\n<code>{report_content}</code>", reply_markup=kb.as_markup())
 
-# ====================== CALLBACKS ======================
+@dp.callback_query(F.data == "copy_signals")
+async def copy_signals(callback: types.CallbackQuery):
+    await callback.answer("✅ Signals copied to clipboard! (Long press the message)", show_alert=True)
+
 @dp.callback_query(F.data == "regen_sig")
 async def regen_sig(callback: types.CallbackQuery):
     await callback.answer("🔄 Regenerating...")
     await execute_live_signals(callback, is_regen=True)
-
-@dp.callback_query(F.data == "copy_signals")
-async def copy_signals(callback: types.CallbackQuery):
-    await callback.answer("✅ Signals copied!", show_alert=True)
 
 @dp.callback_query(F.data == "change_pair_back")
 async def change_pair_back(callback: types.CallbackQuery):
@@ -343,7 +327,6 @@ async def exit_sys(callback: types.CallbackQuery):
     await callback.message.delete()
     await bot.send_message(callback.from_user.id, "<code>Terminal Closed. Goodbye 👋</code>")
 
-# ====================== MAIN ======================
 async def main():
     init_db()
     await bot.delete_webhook(drop_pending_updates=True)
