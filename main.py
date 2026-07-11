@@ -184,8 +184,6 @@ async def toggle_pair(callback: types.CallbackQuery):
     await callback.message.delete()
     await send_pair_selection(uid)
 
-# (back_to_mode, select_strategy, set_strategy, time handlers same as before)
-
 @dp.callback_query(F.data == "back_to_mode")
 async def back_to_mode(callback: types.CallbackQuery):
     await callback.answer()
@@ -208,7 +206,7 @@ async def set_strategy(callback: types.CallbackQuery):
     await callback.message.delete()
     await bot.send_message(uid, "💎 <b>Enter Number of Days</b> (e.g. <code>7</code>):")
 
-# Time handlers (same)
+# Time handlers
 @dp.message(lambda m: user_ctx.get(m.from_user.id, {}).get("step") == "quotex_days")
 async def handle_quotex_days(message: types.Message):
     if not message.text.strip().isdigit():
@@ -255,7 +253,9 @@ async def execute_live_signals(message: types.Message, is_regen=False):
         async with aiohttp.ClientSession() as session:
             for pair in data["pairs"]:
                 try:
-                    async with session.get(f"https://milongazi197.serv00.net/f/api.php?pair={pair}-OTC&count=100", timeout=15) as resp:
+                    # Nayi API URL aur pair_otc format lagaya gaya hai
+                    api_url = f"https://ego.bdtraderpro.xyz/quotex/v2/qx.php?pair={pair}_otc&timeframe=M1&count=100"
+                    async with session.get(api_url, timeout=15) as resp:
                         if resp.status == 200:
                             text = await resp.text()
                             for line in text.splitlines():
